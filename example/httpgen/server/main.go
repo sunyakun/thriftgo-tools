@@ -3,8 +3,8 @@ package main
 import (
 	"github.com/gin-gonic/gin"
 
-	biz "github.com/sunyakun/thriftgo-tools/example"
-	"github.com/sunyakun/thriftgo-tools/example/httpgen/example"
+	biz "github.com/sunyakun/thriftgo-tools/example/httpgen"
+	"github.com/sunyakun/thriftgo-tools/example/httpgen/http_gen/example"
 )
 
 func main() {

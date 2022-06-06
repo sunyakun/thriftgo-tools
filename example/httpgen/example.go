@@ -1,9 +1,9 @@
-package example
+package httpgen
 
 import (
 	"context"
 
-	"github.com/sunyakun/thriftgo-tools/example/httpgen/example"
+	"github.com/sunyakun/thriftgo-tools/example/httpgen/http_gen/example"
 )
 
 type ExampleService struct{}

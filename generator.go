@@ -1,4 +1,4 @@
-package generator
+package thriftgo_tools
 
 import (
 	"bytes"
@@ -34,7 +34,7 @@ var (
 type Desc struct {
 	Version string
 	PkgPath string // package path like "github.com/cloudwego/thriftgo"
-	PkgName string // package name like "thriftgo"
+	PkgName string // package name like "main"
 	Imports []string
 }
 
@@ -262,6 +262,11 @@ func (g *Generator) genRouter(scope *golang.Scope, name string, desc Desc) ([]*p
 		fs := string(fb)
 		begin := strings.Index(fs, "// @route_gen begin")
 		end := strings.Index(fs, "// @route_gen end")
+
+		if begin == -1 || end == -1 {
+			return nil, errors.New("comment '// @route_gen begin' or '// @route_gen end' not found")
+		}
+
 		generateds = append(generateds, &plugin.Generated{
 			Name:    &name,
 			Content: fs[:begin] + "// @route_gen begin" + plugin.InsertionPoint(srvDesc.PkgName, "Register") + fs[end:],

@@ -5,6 +5,7 @@ go 1.18
 require (
 	github.com/bytedance/go-tagexpr/v2 v2.9.2
 	github.com/cloudwego/thriftgo v0.1.7
+	github.com/duke-git/lancet/v2 v2.0.7
 	github.com/gin-gonic/gin v1.8.0
 )
 
