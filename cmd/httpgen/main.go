@@ -15,6 +15,40 @@ import (
 	generator "github.com/sunyakun/thriftgo-tools"
 )
 
+func ParsePluginArgs(args []string, gargs []string) *generator.Args {
+	a := &generator.Args{TemplateDir: "./templates/gin"}
+	for _, arg := range args {
+		kv := strings.Split(arg, "=")
+		if len(kv) == 2 {
+			k, v := kv[0], kv[1]
+			switch k {
+			case "handler":
+				a.HandlerPath = v
+			case "router":
+				a.RouterPath = v
+			case "service":
+				a.ServicePath = v
+			case "module":
+				a.Module = v
+			case "template_dir":
+				a.TemplateDir = v
+			}
+		}
+	}
+
+	for _, arg := range gargs {
+		kv := strings.Split(arg, "=")
+		if len(kv) == 2 {
+			k, v := kv[0], kv[1]
+			switch k {
+			case "package_prefix":
+				a.PackagePrefix = v
+			}
+		}
+	}
+	return a
+}
+
 func PluginMode() {
 	var req *plugin.Request
 	data, err := ioutil.ReadAll(os.Stdin)
@@ -26,8 +60,10 @@ func PluginMode() {
 		panic(err)
 	}
 
+	args := ParsePluginArgs(req.PluginParameters, req.GeneratorParameters)
+
 	g := generator.NewGenerator()
-	resp, err := g.Execute(req)
+	resp, err := g.Execute(req, args)
 	if err != nil {
 		panic(err)
 	}
@@ -47,6 +83,7 @@ func ProgramMode(pluginPath string) {
 		handlerPath   string
 		servicePath   string
 		packagePrefix string
+		templateDir   string
 		thriftFile    string
 	)
 
@@ -56,6 +93,7 @@ func ProgramMode(pluginPath string) {
 	flag.StringVar(&handlerPath, "handler", "", "handler file path")
 	flag.StringVar(&servicePath, "service", "", "service file path")
 	flag.StringVar(&packagePrefix, "prefix", "", "package prefix")
+	flag.StringVar(&templateDir, "template_dir", "", "code template directory")
 	thriftFile = os.Args[len(os.Args)-1]
 	flag.Parse()
 
@@ -89,6 +127,9 @@ func ProgramMode(pluginPath string) {
 	}
 	if module != "" {
 		pluginArgs = append(pluginArgs, "module="+module)
+	}
+	if templateDir != "" {
+		pluginArgs = append(pluginArgs, "template_dir="+templateDir)
 	}
 	thriftgoArgs = append(thriftgoArgs, "--plugin", "plugin="+pluginPath+":"+strings.Join(pluginArgs, ","))
 	thriftgoArgs = append(thriftgoArgs, thriftFile)

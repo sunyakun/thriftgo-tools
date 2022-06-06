@@ -1,0 +1,3 @@
+{{- range .Handlers }}{{- if ne .HTTPMethod "" }}
+	router.{{ .HTTPMethod }}("{{ .Route }}", handler.{{ .HandlerFuncName }})
+{{- end }}{{- end }}

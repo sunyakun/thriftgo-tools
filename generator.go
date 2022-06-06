@@ -7,6 +7,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
 	"text/template"
 
@@ -14,22 +15,9 @@ import (
 	"github.com/cloudwego/thriftgo/generator/golang"
 	"github.com/cloudwego/thriftgo/parser"
 	"github.com/cloudwego/thriftgo/plugin"
-
-	ginTemplates "github.com/sunyakun/thriftgo-tools/templates/gin"
 )
 
 var Version = "0.0.1"
-
-var funcmap = template.FuncMap{
-	"InsertionPoint": plugin.InsertionPoint,
-}
-
-var (
-	handlerTemplate    = template.New("handler").Funcs(funcmap)
-	routerHeadTemplate = template.New("router_head").Funcs(funcmap)
-	routerTemplate     = template.New("router").Funcs(funcmap)
-	serviceTemplate    = template.New("service").Funcs(funcmap)
-)
 
 type Desc struct {
 	Version string
@@ -66,57 +54,19 @@ type Args struct {
 	ServicePath   string
 	Module        string
 	PackagePrefix string
-}
-
-func ParseArgs(args []string, gargs []string) *Args {
-	a := &Args{}
-	for _, arg := range args {
-		kv := strings.Split(arg, "=")
-		if len(kv) == 2 {
-			k, v := kv[0], kv[1]
-			switch k {
-			case "handler":
-				a.HandlerPath = v
-			case "router":
-				a.RouterPath = v
-			case "service":
-				a.ServicePath = v
-			case "module":
-				a.Module = v
-			}
-		}
-	}
-
-	for _, arg := range gargs {
-		kv := strings.Split(arg, "=")
-		if len(kv) == 2 {
-			k, v := kv[0], kv[1]
-			switch k {
-			case "package_prefix":
-				a.PackagePrefix = v
-			}
-		}
-	}
-	return a
-}
-
-func execute(tpl *template.Template, templateText string, data interface{}) (string, error) {
-	writer := bytes.NewBuffer(make([]byte, 0, 1024))
-	tpl, err := tpl.Parse(templateText)
-	if err != nil {
-		return "", err
-	}
-	if err := tpl.Execute(writer, data); err != nil {
-		return "", err
-	}
-	return writer.String(), nil
+	TemplateDir   string
 }
 
 type Generator struct {
-	logfunc   backend.LogFunc
-	warns     []string
-	resp      *plugin.Response
-	codeutils *golang.CodeUtils
+	logfunc       backend.LogFunc
+	warns         []string
+	resp          *plugin.Response
+	codeutils     *golang.CodeUtils
+	handlerTpl    *template.Template
+	routerTpl     *template.Template
+	serviceTpl    *template.Template
+	routerBodyTpl *template.Template
+	tplFuncs      template.FuncMap
 }
 
 func NewGenerator() *Generator {
@@ -130,6 +80,9 @@ func NewGenerator() *Generator {
 		MultiWarn: func(warns []string) { g.warns = append(g.warns, warns...) },
 	}
 	g.codeutils = golang.NewCodeUtils(g.logfunc)
+	g.tplFuncs = template.FuncMap{
+		"InsertionPoint": plugin.InsertionPoint,
+	}
 	return g
 }
 
@@ -223,14 +176,15 @@ func (g *Generator) genHandler(scope *golang.Scope, name string, desc Desc) ([]*
 		return nil, err
 	}
 
-	content, err := execute(handlerTemplate, ginTemplates.HandlerTemplateText, srvDesc)
+	var buf bytes.Buffer
+	err = g.handlerTpl.Execute(&buf, srvDesc)
 	if err != nil {
 		return nil, err
 	}
 	return []*plugin.Generated{
 		{
 			Name:    &name,
-			Content: content,
+			Content: buf.String(),
 		},
 	}, nil
 }
@@ -246,13 +200,13 @@ func (g *Generator) genRouter(scope *golang.Scope, name string, desc Desc) ([]*p
 
 	finfo, err := os.Stat(name)
 	if errors.Is(err, os.ErrNotExist) || finfo.IsDir() {
-		content, err := execute(routerHeadTemplate, ginTemplates.RouterHeadTemplateText, srvDesc)
-		if err != nil {
+		writer := bytes.NewBuffer(make([]byte, 0, 1024))
+		if err := g.routerTpl.Execute(writer, srvDesc); err != nil {
 			return nil, err
 		}
 		generateds = append(generateds, &plugin.Generated{
 			Name:    &name,
-			Content: content,
+			Content: writer.String(),
 		})
 	} else {
 		fb, err := ioutil.ReadFile(name)
@@ -273,16 +227,17 @@ func (g *Generator) genRouter(scope *golang.Scope, name string, desc Desc) ([]*p
 		})
 	}
 
-	content, err := execute(routerTemplate, ginTemplates.RouterTemplateText, map[string]interface{}{
+	writer := bytes.NewBuffer(make([]byte, 0, 1024))
+	if err := g.routerBodyTpl.Execute(writer, map[string]interface{}{
 		"Handlers":        srvDesc.Handlers,
 		"ServiceTypeName": srvDesc.ServiceTypeName,
-	})
-	if err != nil {
+	}); err != nil {
 		return nil, err
 	}
+
 	insertPoint := srvDesc.PkgName + ".Register"
 	generateds = append(generateds, &plugin.Generated{
-		Content:        content,
+		Content:        writer.String(),
 		InsertionPoint: &insertPoint,
 	})
 	return generateds, nil
@@ -296,14 +251,15 @@ func (g *Generator) genService(scope *golang.Scope, name string, desc Desc) ([]*
 
 	srvDesc.Desc = desc
 
-	content, err := execute(serviceTemplate, ginTemplates.ServiceTemplateText, srvDesc)
-	if err != nil {
+	writer := bytes.NewBuffer(make([]byte, 0, 1024))
+	if err := g.serviceTpl.Execute(writer, srvDesc); err != nil {
 		return nil, err
 	}
+
 	return []*plugin.Generated{
 		{
 			Name:    &name,
-			Content: content,
+			Content: writer.String(),
 		},
 	}, nil
 }
@@ -332,9 +288,31 @@ func (g *Generator) validateOutputPath(outPath, expectPkg string) error {
 	return nil
 }
 
-func (g *Generator) Execute(req *plugin.Request) (*plugin.Response, error) {
-	args := ParseArgs(req.PluginParameters, req.GeneratorParameters)
+func (g *Generator) LoadTemplates(dir string) (handlerTpl, routerTpl, routerBodyTpl, serviceTpl *template.Template, err error) {
+	handlerTpl, err = template.New("handler.tmpl").Funcs(g.tplFuncs).ParseFiles(filepath.Join(dir, "handler.tmpl"))
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
 
+	routerTpl, err = template.New("router.tmpl").Funcs(g.tplFuncs).ParseFiles(filepath.Join(dir, "router.tmpl"))
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	routerBodyTpl, err = template.New("router_body.tmpl").Funcs(g.tplFuncs).ParseFiles(filepath.Join(dir, "router_body.tmpl"))
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	serviceTpl, err = template.New("service.tmpl").Funcs(g.tplFuncs).ParseFiles(filepath.Join(dir, "service.tmpl"))
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+
+	return
+}
+
+func (g *Generator) Execute(req *plugin.Request, args *Args) (*plugin.Response, error) {
 	scope, err := golang.BuildScope(g.codeutils, req.AST)
 	if err != nil {
 		return nil, err
@@ -351,6 +329,11 @@ func (g *Generator) Execute(req *plugin.Request) (*plugin.Response, error) {
 	}
 
 	if err := g.validateOutputPath(args.ServicePath, pkg); err != nil {
+		return nil, err
+	}
+
+	g.handlerTpl, g.routerTpl, g.routerBodyTpl, g.serviceTpl, err = g.LoadTemplates(args.TemplateDir)
+	if err != nil {
 		return nil, err
 	}
 
