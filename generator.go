@@ -92,7 +92,12 @@ func (g *Generator) parseStructFieldAnnotation(annotations parser.Annotations) (
 		if strings.HasPrefix(a.Key, "api.") {
 			switch strings.ToUpper(a.Key[4:]) {
 			case "PATH", "QUERY", "FORM", "COOKIE", "HEADER", "BODY", "VD":
-				tags = append(tags, fmt.Sprintf("%s:\"%s\"", a.Key[4:], strings.Join(a.Values, ",")))
+				tagName := strings.ToLower(a.Key[4:])
+				if tagName == "body" {
+					// body will use json tag and the thriftgo will generate it
+					continue
+				}
+				tags = append(tags, fmt.Sprintf("%s:\"%s\"", tagName, strings.Join(a.Values, ",")))
 			default:
 				return "", fmt.Errorf("annotations %s is not support", a.Key)
 			}
@@ -338,8 +343,11 @@ func (g *Generator) Execute(req *plugin.Request, args *Args) (*plugin.Response, 
 	}
 
 	var imports []string
-	for _, include := range scope.Includes() {
-		imports = append(imports, args.PackagePrefix+"/"+include.ImportPath)
+	// FIXME: the ImportPath may include no need package
+	if args.PackagePrefix != "" && path.Dir(args.HandlerPath) != "." {
+		for _, include := range scope.Includes() {
+			imports = append(imports, args.PackagePrefix+"/"+include.ImportPath)
+		}
 	}
 
 	desc := Desc{Version: Version, PkgName: pkg, Imports: imports}
